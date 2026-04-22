@@ -9,11 +9,8 @@ import {
   PreTrainedModel,
   PreTrainedTokenizer,
   Tensor,
-  TokenClassifierOutput,
+  softmax,
 } from "@huggingface/transformers";
-import { softmax, tensor3d } from "@tensorflow/tfjs";
-import { chunk } from "es-toolkit/array";
-import { Tiktoken } from "js-tiktoken/lite";
 
 import {
   GetPureTokenFunction,
@@ -21,6 +18,9 @@ import {
   Logger,
   percentile,
   replace_added_token,
+  chunk,
+  decode_tokens,
+  convert_ids_to_tokens,
 } from "./utils.js";
 
 /**
@@ -194,7 +194,9 @@ export class PromptCompressorLLMLingua2 {
     /**
      * The tokenizer to use calculating the compression rate.
      */
-    private readonly oaiTokenizer: Tiktoken,
+    private readonly oaiTokenizer: {
+      encode: (text: string) => { length: number };
+    },
 
     /**
      * Configuration for LLMLingua2.
@@ -222,13 +224,13 @@ export class PromptCompressorLLMLingua2 {
     /**
      * Logger function to log messages.
      */
-    private readonly logger: Logger = console.log
+    private readonly logger: Logger = console.log,
   ) {
     for (let i = 0; i < this.llmlingua2Config.max_force_token; i++) {
       this.addedTokens.push(`[NEW${i}]`);
     }
 
-    const specialTokensMap = this.tokenizer.special_tokens || {};
+    const specialTokensMap = this.tokenizer.all_special_tokens || {};
 
     this.specialTokens = new Set<string>();
 
@@ -252,7 +254,7 @@ export class PromptCompressorLLMLingua2 {
       forceReserveDigit = false,
       dropConsecutive = false,
       chunkEndTokens = [".", "\n"],
-    }: CompressPromptOptions
+    }: CompressPromptOptions,
   ): Promise<string> {
     return this.compressSingleContext({
       context,
@@ -273,7 +275,7 @@ export class PromptCompressorLLMLingua2 {
    */
   public async compress_prompt(
     context: string,
-    options: CompressPromptOptionsSnakeCase
+    options: CompressPromptOptionsSnakeCase,
   ) {
     return this.compress(context, {
       rate: options.rate,
@@ -319,7 +321,7 @@ export class PromptCompressorLLMLingua2 {
 
     this.logger(
       "original token length: appx. ",
-      n_original_token.toLocaleString()
+      n_original_token.toLocaleString(),
     );
 
     for (const [original, newToken] of Object.entries(token_map)) {
@@ -330,7 +332,7 @@ export class PromptCompressorLLMLingua2 {
 
     this.logger(
       "chunking finished. chunk count: ",
-      chunkedContexts.length.toLocaleString()
+      chunkedContexts.length.toLocaleString(),
     );
 
     let final_reduce_rate = 1.0 - rate;
@@ -338,7 +340,7 @@ export class PromptCompressorLLMLingua2 {
     if (target_token > 0 && n_original_token > 0) {
       const rate_to_keep_for_token_level = Math.min(
         target_token / n_original_token,
-        1.0
+        1.0,
       );
       final_reduce_rate = 1.0 - rate_to_keep_for_token_level;
     }
@@ -352,7 +354,7 @@ export class PromptCompressorLLMLingua2 {
         token_map,
         force_reserve_digit,
         drop_consecutive,
-      }
+      },
     );
 
     this.logger("compression finished");
@@ -363,7 +365,7 @@ export class PromptCompressorLLMLingua2 {
 
   private chunkContext(
     originText: string,
-    chunkEndTokens: Set<string>
+    chunkEndTokens: Set<string>,
   ): string[] {
     const maxLenTokens = this.llmlingua2Config.max_seq_length - 2;
     const origin_list: string[] = [];
@@ -373,8 +375,9 @@ export class PromptCompressorLLMLingua2 {
 
     while (st < n) {
       if (st + maxLenTokens > n - 1) {
-        const chunk = this.tokenizer.decoder.decode(
-          origin_tokens.slice(st, n - 1)
+        const chunk = decode_tokens(
+          this.tokenizer,
+          origin_tokens.slice(st, n - 1),
         );
         origin_list.push(chunk);
         break;
@@ -388,8 +391,9 @@ export class PromptCompressorLLMLingua2 {
           }
         }
 
-        const chunk = this.tokenizer.decoder.decode(
-          origin_tokens.slice(st, ed + 1)
+        const chunk = decode_tokens(
+          this.tokenizer,
+          origin_tokens.slice(st, ed + 1),
         );
 
         origin_list.push(chunk);
@@ -409,7 +413,7 @@ export class PromptCompressorLLMLingua2 {
     token_probs: number[],
     force_tokens_original: string[],
     token_map: Record<string, string>,
-    force_reserve_digit: boolean
+    force_reserve_digit: boolean,
   ): {
     words: string[];
     word_probs_with_force_logic: number[][];
@@ -476,11 +480,11 @@ export class PromptCompressorLLMLingua2 {
 
   private tokenProbToWordProb(
     tokenProbsPerWord: number[][],
-    convertMode: "mean" | "first" = "mean"
+    convertMode: "mean" | "first" = "mean",
   ): number[] {
     if (convertMode === "mean") {
       return tokenProbsPerWord.map(
-        (probs) => probs.reduce((sum, prob) => sum + prob, 0) / probs.length
+        (probs) => probs.reduce((sum, prob) => sum + prob, 0) / probs.length,
       );
     } else if (convertMode === "first") {
       return tokenProbsPerWord.map((probs) => probs[0]);
@@ -497,7 +501,7 @@ export class PromptCompressorLLMLingua2 {
       token_map: Record<string, string>;
       force_reserve_digit: boolean;
       drop_consecutive: boolean;
-    }
+    },
   ): Promise<string[]> {
     const {
       reduce_rate,
@@ -518,7 +522,7 @@ export class PromptCompressorLLMLingua2 {
 
     const chunked_contexts = chunk(
       contexts,
-      this.llmlingua2Config.max_batch_size
+      this.llmlingua2Config.max_batch_size,
     );
 
     for (const context of chunked_contexts) {
@@ -529,9 +533,7 @@ export class PromptCompressorLLMLingua2 {
 
       this.logger("input tokenization finished");
 
-      const input_ids_dims = input_ids.dims;
-
-      const outputs: TokenClassifierOutput = await this.model({
+      const outputs = await this.model({
         input_ids,
         attention_mask,
       });
@@ -542,28 +544,25 @@ export class PromptCompressorLLMLingua2 {
 
       this.logger("logits shape:", outputs.logits.dims);
 
-      const logits = tensor3d(
-        outputs.logits.data,
-        [batch_size, seq_len, num_classes],
-        "float32"
-      );
-
-      this.logger("logits tensor created with shape:", logits.shape);
-
-      const probs = softmax(logits, -1);
-
       for (let j = 0; j < batch_size; j++) {
-        const chunk_probs_class1 = probs.slice([j, 0, 1], [1, -1, 1]);
         const chunk_ids = input_ids[j] as Tensor;
         const chunk_mask = attention_mask[j] as Tensor;
 
         const chunk_mask_number_array = Array.from(chunk_mask.data, (v) =>
-          Number(v)
+          Number(v),
         );
 
-        const active_probs = chunk_probs_class1
-          .dataSync()
-          .filter((_, i) => chunk_mask_number_array[i] > 0);
+        const chunk_probs_class1 = Array.from({ length: seq_len }, (_, i) => {
+          const startIdx = (j * seq_len + i) * num_classes;
+          const token_logits = Array.from(
+            outputs.logits.data.slice(startIdx, startIdx + num_classes),
+          ) as number[];
+          return softmax(token_logits)[1];
+        });
+
+        const active_probs = chunk_probs_class1.filter(
+          (_, i) => chunk_mask_number_array[i] > 0,
+        );
 
         const active_ids = chunk_ids.data
           .filter((_, i) => chunk_mask_number_array[i] > 0n)
@@ -574,8 +573,9 @@ export class PromptCompressorLLMLingua2 {
           continue;
         }
 
-        const token_list = this.tokenizer.model.convert_ids_to_tokens(
-          new Tensor("int64", active_ids, [active_ids.length]).tolist()
+        const token_list = convert_ids_to_tokens(
+          this.tokenizer,
+          new Tensor("int64", active_ids, [active_ids.length]).tolist(),
         );
 
         const token_prob_list = Array.from(active_probs);
@@ -585,12 +585,12 @@ export class PromptCompressorLLMLingua2 {
           token_prob_list,
           force_tokens,
           token_map,
-          force_reserve_digit
+          force_reserve_digit,
         );
 
         const word_probs = this.tokenProbToWordProb(
           word_probs_with_force_logic,
-          token_to_word
+          token_to_word,
         );
 
         const new_token_probs: number[] = [];
@@ -620,8 +620,8 @@ export class PromptCompressorLLMLingua2 {
         }
 
         const keep_str = replace_added_token(
-          this.tokenizer.decoder.decode(keep_words),
-          token_map
+          decode_tokens(this.tokenizer, keep_words),
+          token_map,
         );
 
         compressed_chunk_strings_flat.push(keep_str);

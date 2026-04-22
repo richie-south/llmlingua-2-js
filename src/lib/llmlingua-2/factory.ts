@@ -12,9 +12,12 @@ import {
   AutoModelForTokenClassification,
   AutoTokenizer,
   PretrainedConfig,
-  TransformersJSConfig,
 } from "@huggingface/transformers";
-import { Tiktoken } from "js-tiktoken";
+
+// This is no longer exposed directly after Transformers 4.x
+type TransformersJSConfig = NonNullable<
+  PretrainedConfig["transformers.js_config"]
+>;
 
 import { PromptCompressorLLMLingua2 } from "./prompt-compressor.js";
 import {
@@ -34,12 +37,12 @@ type PretrainedModelOptions = Parameters<
 
 async function prepareDependencies(
   modelName: string,
-  transformerJSConfig: TransformersJSConfig,
+  transformersJSConfig: TransformersJSConfig,
   logger: Logger,
 
   pretrainedConfig?: PretrainedConfig | null,
   pretrainedTokenizerOptions?: PreTrainedTokenizerOptions | null,
-  modelSpecificOptions?: PretrainedModelOptions | null
+  modelSpecificOptions?: PretrainedModelOptions | null,
 ) {
   const config =
     pretrainedConfig ?? (await AutoConfig.from_pretrained(modelName));
@@ -48,8 +51,8 @@ async function prepareDependencies(
   const tokenizerConfig = {
     config: {
       ...config,
-      ...(transformerJSConfig
-        ? { "transformers.js_config": transformerJSConfig }
+      ...(transformersJSConfig
+        ? { "transformers.js_config": transformersJSConfig }
         : {}),
     },
     ...pretrainedTokenizerOptions,
@@ -58,15 +61,15 @@ async function prepareDependencies(
 
   const tokenizer = await AutoTokenizer.from_pretrained(
     modelName,
-    tokenizerConfig
+    tokenizerConfig,
   );
   logger({ tokenizer });
 
   const modelConfig = {
     config: {
       ...config,
-      ...(transformerJSConfig
-        ? { "transformers.js_config": transformerJSConfig }
+      ...(transformersJSConfig
+        ? { "transformers.js_config": transformersJSConfig }
         : {}),
     },
     ...modelSpecificOptions,
@@ -75,7 +78,7 @@ async function prepareDependencies(
 
   const model = await AutoModelForTokenClassification.from_pretrained(
     modelName,
-    modelConfig
+    modelConfig,
   );
   logger({ model });
 
@@ -91,12 +94,12 @@ export interface LLMLingua2FactoryOptions {
   /**
    * Configuration for Transformers.js.
    */
-  transformerJSConfig: TransformersJSConfig;
+  transformersJSConfig: TransformersJSConfig;
 
   /**
    * The tokenizer to use calculating the compression rate.
    */
-  oaiTokenizer: Tiktoken;
+  oaiTokenizer: { encode: (text: string) => { length: number } };
 
   /**
    * Optional pretrained configuration.
@@ -153,20 +156,19 @@ export interface LLMLingua2FactoryReturn {
  * with XLM-RoBERTa model.
  *
  * @category Factory
- * 
- * @example 
+ *
+ * @example
  * ```ts
 import { LLMLingua2 } from "@atjsh/llmlingua-2";
 
-import { Tiktoken } from "js-tiktoken/lite";
-import o200k_base from "js-tiktoken/ranks/o200k_base";
+import { AutoTokenizer } from "@huggingface/transformers";
 
 const modelName = "atjsh/llmlingua-2-js-xlm-roberta-large-meetingbank";
-const oai_tokenizer = new Tiktoken(o200k_base);
+const oai_tokenizer = await AutoTokenizer.from_pretrained("Xenova/gpt-4o");
 
 const { promptCompressor } = await LLMLingua2.WithXLMRoBERTa(modelName,
   {
-    transformerJSConfig: {
+    transformersJSConfig: {
       device: "auto",
       dtype: "fp32",
     },
@@ -187,10 +189,10 @@ console.log({ compressedText });
  */
 export async function WithXLMRoBERTa(
   modelName: string,
-  options: LLMLingua2FactoryOptions
+  options: LLMLingua2FactoryOptions,
 ): Promise<LLMLingua2FactoryReturn> {
   const {
-    transformerJSConfig,
+    transformersJSConfig,
     oaiTokenizer,
     pretrainedConfig,
     pretrainedTokenizerOptions,
@@ -200,11 +202,11 @@ export async function WithXLMRoBERTa(
 
   const { model, tokenizer, config } = await prepareDependencies(
     modelName,
-    transformerJSConfig,
+    transformersJSConfig,
     logger,
     pretrainedConfig,
     pretrainedTokenizerOptions,
-    modelSpecificOptions
+    modelSpecificOptions,
   );
 
   const promptCompressor = new PromptCompressorLLMLingua2(
@@ -212,7 +214,7 @@ export async function WithXLMRoBERTa(
     tokenizer,
     get_pure_tokens_xlm_roberta_large,
     is_begin_of_new_word_xlm_roberta_large,
-    oaiTokenizer
+    oaiTokenizer,
   );
 
   logger({ promptCompressor });
@@ -230,20 +232,19 @@ export async function WithXLMRoBERTa(
  * with BERT Multilingual model.
  *
  * @category Factory
- * 
- * @example 
+ *
+ * @example
  * ```ts
 import { LLMLingua2 } from "@atjsh/llmlingua-2";
 
-import { Tiktoken } from "js-tiktoken/lite";
-import o200k_base from "js-tiktoken/ranks/o200k_base";
+import { AutoTokenizer } from "@huggingface/transformers";
 
 const modelName = "Arcoldd/llmlingua4j-bert-base-onnx";
-const oai_tokenizer = new Tiktoken(o200k_base);
+const oai_tokenizer = await AutoTokenizer.from_pretrained("Xenova/gpt-4o");
 
 const { promptCompressor } = await LLMLingua2.WithBERTMultilingual(modelName,
   {
-    transformerJSConfig: {
+    transformersJSConfig: {
       device: "auto",
       dtype: "fp32",
     },
@@ -264,10 +265,10 @@ console.log({ compressedText });
  */
 export async function WithBERTMultilingual(
   modelName: string,
-  options: LLMLingua2FactoryOptions
+  options: LLMLingua2FactoryOptions,
 ): Promise<LLMLingua2FactoryReturn> {
   const {
-    transformerJSConfig,
+    transformersJSConfig,
     oaiTokenizer,
     pretrainedConfig,
     pretrainedTokenizerOptions,
@@ -277,11 +278,11 @@ export async function WithBERTMultilingual(
 
   const { model, tokenizer, config } = await prepareDependencies(
     modelName,
-    transformerJSConfig,
+    transformersJSConfig,
     logger,
     pretrainedConfig,
     pretrainedTokenizerOptions,
-    modelSpecificOptions
+    modelSpecificOptions,
   );
 
   const promptCompressor = new PromptCompressorLLMLingua2(
@@ -289,7 +290,7 @@ export async function WithBERTMultilingual(
     tokenizer,
     get_pure_tokens_bert_base_multilingual_cased,
     is_begin_of_new_word_bert_base_multilingual_cased,
-    oaiTokenizer
+    oaiTokenizer,
   );
 
   logger({ promptCompressor });
