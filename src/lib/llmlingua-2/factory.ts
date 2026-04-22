@@ -215,6 +215,8 @@ export async function WithXLMRoBERTa(
     get_pure_tokens_xlm_roberta_large,
     is_begin_of_new_word_xlm_roberta_large,
     oaiTokenizer,
+    undefined,
+    logger,
   );
 
   logger({ promptCompressor });
@@ -291,6 +293,8 @@ export async function WithBERTMultilingual(
     get_pure_tokens_bert_base_multilingual_cased,
     is_begin_of_new_word_bert_base_multilingual_cased,
     oaiTokenizer,
+    undefined,
+    logger,
   );
 
   logger({ promptCompressor });
